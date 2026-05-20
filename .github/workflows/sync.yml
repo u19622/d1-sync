@@ -1,0 +1,52 @@
+name: D1 Sync Railway → Neon
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # Cada 10 minutos
+  workflow_dispatch:          # Permite ejecución manual
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get install -y postgresql-client
+
+      - name: Sync incremental Railway → Neon
+        env:
+          RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
+          NEON_URL: ${{ secrets.NEON_URL }}
+        run: |
+          TABLAS="alumnos matriculas clases asistencia audit_log usuarios programas cursos profesores sedes salones configuracion"
+          
+          for TABLA in $TABLAS; do
+            echo "🔄 Sincronizando $TABLA..."
+            
+            # Obtener último updated_at o created_at en Neon
+            LAST=$(psql "$NEON_URL" -t -c "SELECT COALESCE(MAX(GREATEST(updated_at, created_at)), '1970-01-01') FROM $TABLA;" 2>/dev/null || echo "1970-01-01")
+            LAST=$(echo $LAST | xargs)
+            
+            echo "   Último registro en Neon: $LAST"
+            
+            # Exportar registros nuevos/modificados de Railway
+            psql "$RAILWAY_URL" -c "\COPY (SELECT * FROM $TABLA WHERE GREATEST(COALESCE(updated_at, created_at), COALESCE(created_at, updated_at)) > '$LAST') TO STDOUT WITH CSV HEADER" > /tmp/${TABLA}.csv 2>/dev/null
+            
+            ROWS=$(wc -l < /tmp/${TABLA}.csv)
+            echo "   Filas a sincronizar: $((ROWS - 1))"
+            
+            if [ "$ROWS" -gt 1 ]; then
+              # Upsert en Neon usando tabla temporal
+              psql "$NEON_URL" << SQLEOF
+                CREATE TEMP TABLE tmp_${TABLA} (LIKE ${TABLA} INCLUDING ALL);
+                \COPY tmp_${TABLA} FROM '/tmp/${TABLA}.csv' WITH CSV HEADER;
+                INSERT INTO ${TABLA} SELECT * FROM tmp_${TABLA}
+                  ON CONFLICT (id) DO UPDATE SET $(psql "$RAILWAY_URL" -t -c "SELECT string_agg(column_name || '=EXCLUDED.' || column_name, ',') FROM information_schema.columns WHERE table_name='$TABLA' AND column_name != 'id';" 2>/dev/null | xargs);
+                DROP TABLE tmp_${TABLA};
+SQLEOF
+              echo "   ✅ $TABLA sincronizada"
+            else
+              echo "   ⏭ $TABLA sin cambios"
+            fi
+          done
+          
+          echo "✅ Sync completado"
