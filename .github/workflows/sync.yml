@@ -19,9 +19,20 @@ jobs:
         run: |
           for TABLA in alumnos matriculas clases asistencia audit_log usuarios programas cursos profesores sedes salones configuracion; do
             echo "Sincronizando $TABLA"
-            LAST=$(psql "$NEON_URL" -t -c "SELECT COALESCE(MAX(updated_at), MAX(created_at), '1970-01-01'::timestamptz) FROM $TABLA;" 2>/dev/null | xargs)
-            psql "$RAILWAY_URL" -c "\COPY (SELECT * FROM $TABLA WHERE COALESCE(updated_at, created_at) > '$LAST') TO STDOUT WITH CSV HEADER" > /tmp/${TABLA}.csv 2>/dev/null
+
+            HAS_UPDATED=$(psql "$RAILWAY_URL" -t -c "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='$TABLA' AND column_name='updated_at';" 2>/dev/null | xargs)
+
+            if [ "$HAS_UPDATED" = "1" ]; then
+              LAST=$(psql "$NEON_URL" -t -c "SELECT COALESCE(MAX(updated_at), MAX(created_at), '1970-01-01'::timestamptz) FROM $TABLA;" 2>/dev/null | xargs)
+              FILTER="COALESCE(updated_at, created_at) > '$LAST'"
+            else
+              LAST=$(psql "$NEON_URL" -t -c "SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamptz) FROM $TABLA;" 2>/dev/null | xargs)
+              FILTER="created_at > '$LAST'"
+            fi
+
+            psql "$RAILWAY_URL" -c "\COPY (SELECT * FROM $TABLA WHERE $FILTER) TO STDOUT WITH CSV HEADER" > /tmp/${TABLA}.csv 2>/dev/null
             ROWS=$(wc -l < /tmp/${TABLA}.csv)
+
             if [ "$ROWS" -gt 1 ]; then
               UPDATE_SET=$(psql "$RAILWAY_URL" -t -c "SELECT string_agg(column_name || '=EXCLUDED.' || column_name, ',') FROM information_schema.columns WHERE table_name='$TABLA' AND column_name != 'id' ORDER BY ordinal_position;" 2>/dev/null | xargs)
               psql "$NEON_URL" -c "CREATE TEMP TABLE tmp_sync (LIKE $TABLA);"
