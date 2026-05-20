@@ -12,37 +12,11 @@ jobs:
       RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
       NEON_URL: ${{ secrets.NEON_URL }}
     steps:
-      - name: Install PostgreSQL client
-        run: sudo apt-get install -y postgresql-client
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: pip install psycopg2-binary
 
       - name: Run sync
-        run: |
-          for TABLA in alumnos matriculas clases asistencia audit_log usuarios programas cursos profesores sedes salones configuracion; do
-            echo "Sincronizando $TABLA"
-
-            HAS_UPDATED=$(psql "$RAILWAY_URL" -t -c "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='$TABLA' AND column_name='updated_at';" 2>/dev/null | xargs)
-
-            if [ "$HAS_UPDATED" = "1" ]; then
-              LAST=$(psql "$NEON_URL" -t -c "SELECT COALESCE(MAX(updated_at), MAX(created_at), '1970-01-01'::timestamptz) FROM $TABLA;" 2>/dev/null | xargs)
-              FILTER="COALESCE(updated_at, created_at) > '$LAST'"
-            else
-              LAST=$(psql "$NEON_URL" -t -c "SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamptz) FROM $TABLA;" 2>/dev/null | xargs)
-              FILTER="created_at > '$LAST'"
-            fi
-
-            psql "$RAILWAY_URL" -c "\COPY (SELECT * FROM $TABLA WHERE $FILTER) TO '/tmp/${TABLA}.csv' WITH CSV HEADER" 2>/dev/null
-            ROWS=$(wc -l < /tmp/${TABLA}.csv 2>/dev/null || echo 0)
-
-            if [ "$ROWS" -gt 1 ]; then
-              UPDATE_SET=$(psql "$RAILWAY_URL" -t -c "SELECT string_agg(column_name || '=EXCLUDED.' || column_name, ',') FROM information_schema.columns WHERE table_name='$TABLA' AND column_name != 'id' ORDER BY ordinal_position;" 2>/dev/null | xargs)
-              psql "$NEON_URL" << SQLEOF
-                CREATE TEMP TABLE tmp_sync (LIKE $TABLA);
-                \COPY tmp_sync FROM '/tmp/${TABLA}.csv' WITH CSV HEADER;
-                INSERT INTO $TABLA SELECT * FROM tmp_sync ON CONFLICT (id) DO UPDATE SET $UPDATE_SET;
-                DROP TABLE tmp_sync;
-SQLEOF
-              echo "OK $TABLA - $((ROWS-1)) filas"
-            else
-              echo "Sin cambios $TABLA"
-            fi
-          done
+        run: python sync.py
