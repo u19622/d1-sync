@@ -1,4 +1,4 @@
-name: D1 Sync Railway → Neon
+name: D1 Sync Railway to Neon
 
 on:
   schedule:
@@ -8,40 +8,28 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
+      NEON_URL: ${{ secrets.NEON_URL }}
     steps:
       - name: Install PostgreSQL client
         run: sudo apt-get install -y postgresql-client
 
-      - name: Sync incremental Railway → Neon
-        env:
-          RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
-          NEON_URL: ${{ secrets.NEON_URL }}
+      - name: Run sync
         run: |
-          TABLAS="alumnos matriculas clases asistencia audit_log usuarios programas cursos profesores sedes salones configuracion"
-
-          for TABLA in $TABLAS; do
-            echo "Sincronizando $TABLA..."
-
-            LAST=$(psql "$NEON_URL" -t -c "SELECT COALESCE(MAX(GREATEST(COALESCE(updated_at,'1970-01-01'), COALESCE(created_at,'1970-01-01'))), '1970-01-01') FROM $TABLA;" 2>/dev/null | xargs)
-            echo "Ultimo en Neon: $LAST"
-
-            psql "$RAILWAY_URL" -c "\COPY (SELECT * FROM $TABLA WHERE GREATEST(COALESCE(updated_at,'1970-01-01'::timestamptz), COALESCE(created_at,'1970-01-01'::timestamptz)) > '$LAST'::timestamptz) TO STDOUT WITH CSV HEADER" > /tmp/${TABLA}.csv 2>/dev/null
-
+          for TABLA in alumnos matriculas clases asistencia audit_log usuarios programas cursos profesores sedes salones configuracion; do
+            echo "Sincronizando $TABLA"
+            LAST=$(psql "$NEON_URL" -t -c "SELECT COALESCE(MAX(updated_at), MAX(created_at), '1970-01-01'::timestamptz) FROM $TABLA;" 2>/dev/null | xargs)
+            psql "$RAILWAY_URL" -c "\COPY (SELECT * FROM $TABLA WHERE COALESCE(updated_at, created_at) > '$LAST') TO STDOUT WITH CSV HEADER" > /tmp/${TABLA}.csv 2>/dev/null
             ROWS=$(wc -l < /tmp/${TABLA}.csv)
-            echo "Filas nuevas: $((ROWS - 1))"
-
             if [ "$ROWS" -gt 1 ]; then
-              COLS=$(psql "$RAILWAY_URL" -t -c "SELECT string_agg(column_name, ',') FROM information_schema.columns WHERE table_name='$TABLA' ORDER BY ordinal_position;" 2>/dev/null | xargs)
               UPDATE_SET=$(psql "$RAILWAY_URL" -t -c "SELECT string_agg(column_name || '=EXCLUDED.' || column_name, ',') FROM information_schema.columns WHERE table_name='$TABLA' AND column_name != 'id' ORDER BY ordinal_position;" 2>/dev/null | xargs)
-
-              psql "$NEON_URL" -c "CREATE TEMP TABLE tmp_sync (LIKE ${TABLA});" 2>/dev/null
+              psql "$NEON_URL" -c "CREATE TEMP TABLE tmp_sync (LIKE $TABLA);"
               psql "$NEON_URL" -c "\COPY tmp_sync FROM '/tmp/${TABLA}.csv' WITH CSV HEADER;"
-              psql "$NEON_URL" -c "INSERT INTO ${TABLA} SELECT * FROM tmp_sync ON CONFLICT (id) DO UPDATE SET ${UPDATE_SET};"
+              psql "$NEON_URL" -c "INSERT INTO $TABLA SELECT * FROM tmp_sync ON CONFLICT (id) DO UPDATE SET $UPDATE_SET;"
               psql "$NEON_URL" -c "DROP TABLE tmp_sync;"
-              echo "OK $TABLA"
+              echo "OK $TABLA - $((ROWS-1)) filas"
             else
               echo "Sin cambios $TABLA"
             fi
           done
-
-          echo "Sync completado"
