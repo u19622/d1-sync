@@ -40,26 +40,41 @@ for tabla in TABLAS:
     json_cols = get_json_cols(rc, tabla)
     json_indices = [cols.index(c) for c in json_cols if c in cols]
 
-    if has_col(nc, tabla, 'updated_at'):
+    tiene_updated = has_col(nc, tabla, 'updated_at')
+    tiene_created = has_col(nc, tabla, 'created_at')
+
+    if tiene_updated and tiene_created:
         nc.execute(f"SELECT COALESCE(MAX(updated_at), MAX(created_at), '1970-01-01'::timestamptz) FROM {tabla}")
-    else:
+    elif tiene_updated:
+        nc.execute(f"SELECT COALESCE(MAX(updated_at), '1970-01-01'::timestamptz) FROM {tabla}")
+    elif tiene_created:
         nc.execute(f"SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamptz) FROM {tabla}")
+    else:
+        print(f"  Sin columna de fecha, omitiendo")
+        continue
     last = nc.fetchone()[0]
 
-    if has_col(rc, tabla, 'updated_at'):
+    tiene_updated_rw = has_col(rc, tabla, 'updated_at')
+    tiene_created_rw = has_col(rc, tabla, 'created_at')
+
+    if tiene_updated_rw and tiene_created_rw:
         rc.execute(f"SELECT * FROM {tabla} WHERE COALESCE(updated_at, created_at) > %s", (last,))
-    else:
+    elif tiene_updated_rw:
+        rc.execute(f"SELECT * FROM {tabla} WHERE updated_at > %s", (last,))
+    elif tiene_created_rw:
         rc.execute(f"SELECT * FROM {tabla} WHERE created_at > %s", (last,))
+    else:
+        rc.execute(f"SELECT * FROM {tabla}")
 
     rows = rc.fetchall()
     if not rows:
         print(f"  Sin cambios")
         continue
 
-    col_str    = ', '.join(cols)
+    col_str      = ', '.join(cols)
     placeholders = ', '.join(['%s'] * len(cols))
-    update_set = ', '.join([f"{c}=EXCLUDED.{c}" for c in cols if c != 'id'])
-    adapted    = [adapt_row(r, json_indices) for r in rows]
+    update_set   = ', '.join([f"{c}=EXCLUDED.{c}" for c in cols if c != 'id'])
+    adapted      = [adapt_row(r, json_indices) for r in rows]
 
     nc.executemany(
         f"INSERT INTO {tabla} ({col_str}) VALUES ({placeholders}) ON CONFLICT (id) DO UPDATE SET {update_set}",
