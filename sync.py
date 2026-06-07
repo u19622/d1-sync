@@ -5,8 +5,7 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['alumnos','matriculas','clases','asistencia','audit_log',
-          'usuarios','programas','cursos','profesores','sedes','salones','configuracion']
+TABLAS = ['sedes','programas','cursos','salones','profesores','usuarios','clases','alumnos','matriculas','asistencia','configuracion','audit_log']
 
 rw = psycopg2.connect(RAILWAY_URL)
 ne = psycopg2.connect(NEON_URL)
