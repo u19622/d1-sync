@@ -42,7 +42,7 @@ def adapt_row(row, json_indices):
 def upsert(nc, ne, tabla, cols, rows, json_indices):
     col_str      = ', '.join(cols)
     placeholders = ', '.join(['%s'] * len(cols))
-    pk_conflict  = PK_COMPUESTA.get(tabla, 'id')
+    pk_conflict  = PK_COMPUESTA.get(tabla, '(id)')
     excluir      = PK_EXCLUIR.get(tabla, {'id'})
     update_set   = ', '.join([f"{c}=EXCLUDED.{c}" for c in cols if c not in excluir])
     adapted      = [adapt_row(r, json_indices) for r in rows]
