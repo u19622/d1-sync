@@ -11,6 +11,7 @@ jobs:
     env:
       RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
       NEON_URL: ${{ secrets.NEON_URL }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
