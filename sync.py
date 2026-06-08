@@ -7,6 +7,12 @@ NEON_URL    = os.environ['NEON_URL']
 
 TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log']
 
+PK_COMPUESTA = {
+    'perfiles_facultades': '(perfil_id, facultad_id)',
+}
+PK_EXCLUIR = {'perfiles_facultades': {'perfil_id','facultad_id'}}
+TABLAS_FULL_SYNC = {'roles', 'tabla_valores'}
+
 rw = psycopg2.connect(RAILWAY_URL)
 ne = psycopg2.connect(NEON_URL)
 rw.autocommit = True
@@ -33,11 +39,34 @@ def adapt_row(row, json_indices):
             row[i] = Json(row[i])
     return tuple(row)
 
+def upsert(nc, ne, tabla, cols, rows, json_indices):
+    col_str      = ', '.join(cols)
+    placeholders = ', '.join(['%s'] * len(cols))
+    pk_conflict  = PK_COMPUESTA.get(tabla, 'id')
+    excluir      = PK_EXCLUIR.get(tabla, {'id'})
+    update_set   = ', '.join([f"{c}=EXCLUDED.{c}" for c in cols if c not in excluir])
+    adapted      = [adapt_row(r, json_indices) for r in rows]
+    nc.executemany(
+        f"INSERT INTO {tabla} ({col_str}) VALUES ({placeholders}) ON CONFLICT {pk_conflict} DO UPDATE SET {update_set}",
+        adapted
+    )
+    ne.commit()
+
 for tabla in TABLAS:
     print(f"Sincronizando {tabla}...")
-    cols = get_cols(rc, tabla)
-    json_cols = get_json_cols(rc, tabla)
+    cols       = get_cols(rc, tabla)
+    json_cols  = get_json_cols(rc, tabla)
     json_indices = [cols.index(c) for c in json_cols if c in cols]
+
+    if tabla in TABLAS_FULL_SYNC:
+        rc.execute(f"SELECT * FROM {tabla}")
+        rows = rc.fetchall()
+        if not rows:
+            print(f"  Sin datos")
+            continue
+        upsert(nc, ne, tabla, cols, rows, json_indices)
+        print(f"  OK {len(rows)} filas (full sync)")
+        continue
 
     tiene_updated = has_col(nc, tabla, 'updated_at')
     tiene_created = has_col(nc, tabla, 'created_at')
@@ -70,16 +99,7 @@ for tabla in TABLAS:
         print(f"  Sin cambios")
         continue
 
-    col_str      = ', '.join(cols)
-    placeholders = ', '.join(['%s'] * len(cols))
-    update_set   = ', '.join([f"{c}=EXCLUDED.{c}" for c in cols if c != 'id'])
-    adapted      = [adapt_row(r, json_indices) for r in rows]
-
-    nc.executemany(
-        f"INSERT INTO {tabla} ({col_str}) VALUES ({placeholders}) ON CONFLICT (id) DO UPDATE SET {update_set}",
-        adapted
-    )
-    ne.commit()
+    upsert(nc, ne, tabla, cols, rows, json_indices)
     print(f"  OK {len(rows)} filas")
 
 print("Sync completado")
