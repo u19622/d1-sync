@@ -33,10 +33,14 @@ def get_json_cols(cur, tabla):
     return [r[0] for r in cur.fetchall()]
 
 def adapt_row(row, json_indices):
+    import json as _json
     row = list(row)
     for i in json_indices:
-        if row[i] is not None and isinstance(row[i], (dict, list)):
-            row[i] = Json(row[i])
+        if row[i] is not None:
+            if isinstance(row[i], str):
+                row[i] = Json(_json.loads(row[i]))
+            elif isinstance(row[i], (dict, list)):
+                row[i] = Json(row[i])
     return tuple(row)
 
 def upsert(nc, ne, tabla, cols, rows, json_indices):
