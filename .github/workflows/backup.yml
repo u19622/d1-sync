@@ -28,11 +28,14 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"branch\":{\"name\":\"${BRANCH_NAME}\",\"parent_id\":\"${PARENT_BRANCH}\"}}")
           cat /tmp/create.json
-          if [ "$HTTP_CODE" != "201" ]; then
+          if [ "$HTTP_CODE" = "201" ]; then
+            echo "OK - branch creado: $BRANCH_NAME"
+          elif [ "$HTTP_CODE" = "409" ]; then
+            echo "OK - branch ya existe: $BRANCH_NAME (idempotente)"
+          else
             echo "ERROR: HTTP $HTTP_CODE"
             exit 1
           fi
-          echo "OK - branch creado: $BRANCH_NAME"
 
       - name: Delete old branches and verify
         run: |
