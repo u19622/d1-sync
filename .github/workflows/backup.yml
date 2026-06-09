@@ -1,0 +1,106 @@
+name: Neon Daily Backup
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # 02:00 Lima (UTC-5)
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create backup branch
+        id: create
+        run: |
+          DATE=$(date -u '+%Y-%m-%d')
+          BRANCH_NAME="backup-${DATE}"
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://console.neon.tech/api/v2/projects/twilight-haze-78896286/branches" \
+            -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"branch\": {
+                \"name\": \"${BRANCH_NAME}\",
+                \"parent_id\": \"br-restless-tooth-ap2p51nb\"
+              }
+            }")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "ERROR: HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
+          fi
+          
+          BRANCH_ID=$(echo "$BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['branch']['id'])")
+          echo "branch_id=$BRANCH_ID" >> $GITHUB_OUTPUT
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "OK - branch creado: $BRANCH_NAME ($BRANCH_ID)"
+
+      - name: Delete branches older than 7 days
+        run: |
+          RESPONSE=$(curl -s \
+            "https://console.neon.tech/api/v2/projects/twilight-haze-78896286/branches" \
+            -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}")
+          
+          CUTOFF=$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-7d '+%Y-%m-%dT%H:%M:%SZ')
+          
+          echo "$RESPONSE" | python3 - << 'PYEOF'
+          import sys, json, urllib.request, urllib.error, os
+          from datetime import datetime, timezone
+          
+          data = json.loads(sys.stdin.read())
+          branches = data.get('branches', [])
+          cutoff = datetime.now(timezone.utc) - __import__('datetime').timedelta(days=7)
+          api_key = os.environ['NEON_API_KEY']
+          
+          deleted = 0
+          for b in branches:
+              if not b['name'].startswith('backup-'):
+                  continue
+              created = datetime.fromisoformat(b['created_at'].replace('Z', '+00:00'))
+              if created < cutoff:
+                  req = urllib.request.Request(
+                      f"https://console.neon.tech/api/v2/projects/twilight-haze-78896286/branches/{b['id']}",
+                      method='DELETE',
+                      headers={'Authorization': f"Bearer {api_key}"}
+                  )
+                  try:
+                      urllib.request.urlopen(req)
+                      print(f"Eliminado: {b['name']} ({b['id']})")
+                      deleted += 1
+                  except urllib.error.HTTPError as e:
+                      print(f"ERROR eliminando {b['name']}: {e.code}")
+          
+          if deleted == 0:
+              print("Sin branches expirados")
+          PYEOF
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+
+      - name: Verify backup exists
+        run: |
+          RESPONSE=$(curl -s \
+            "https://console.neon.tech/api/v2/projects/twilight-haze-78896286/branches" \
+            -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}")
+          
+          DATE=$(date -u '+%Y-%m-%d')
+          FOUND=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          branches = [b['name'] for b in data.get('branches', []) if b['name'].startswith('backup-')]
+          print('\n'.join(sorted(branches)))
+          ")
+          
+          echo "Branches de backup activos:"
+          echo "$FOUND"
+          
+          if echo "$FOUND" | grep -q "backup-${DATE}"; then
+            echo "OK - backup del día verificado"
+          else
+            echo "ERROR - backup del día no encontrado"
+            exit 1
+          fi
