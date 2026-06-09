@@ -5,44 +5,41 @@ on:
     - cron: '0 7 * * *'
   workflow_dispatch:
 
-env:
-  PROJECT_ID: twilight-haze-78896286
-  PARENT_BRANCH: br-restless-tooth-ap2p51nb
-
 jobs:
   backup:
     runs-on: ubuntu-latest
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      PROJECT_ID: twilight-haze-78896286
+      PARENT_BRANCH: br-restless-tooth-ap2p51nb
+
     steps:
       - name: Create backup branch
         run: |
           DATE=$(date -u '+%Y-%m-%d')
           BRANCH_NAME="backup-${DATE}"
           echo "Creando branch: $BRANCH_NAME"
-
-          HTTP_CODE=$(curl -s -o /tmp/create_response.json -w "%{http_code}" -X POST \
-            "https://console.neon.tech/api/v2/projects/${{ env.PROJECT_ID }}/branches" \
-            -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+          HTTP_CODE=$(curl -s -o /tmp/create.json -w "%{http_code}" -X POST \
+            "https://console.neon.tech/api/v2/projects/${PROJECT_ID}/branches" \
+            -H "Authorization: Bearer ${NEON_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"branch\":{\"name\":\"${BRANCH_NAME}\",\"parent_id\":\"${{ env.PARENT_BRANCH }}\"}}")
-
-          cat /tmp/create_response.json
+            -d "{\"branch\":{\"name\":\"${BRANCH_NAME}\",\"parent_id\":\"${PARENT_BRANCH}\"}}")
+          cat /tmp/create.json
           if [ "$HTTP_CODE" != "201" ]; then
             echo "ERROR: HTTP $HTTP_CODE"
             exit 1
           fi
+          echo "OK - branch creado: $BRANCH_NAME"
 
-          BRANCH_ID=$(python3 -c "import json; d=json.load(open('/tmp/create_response.json')); print(d['branch']['id'])")
-          echo "OK - branch creado: $BRANCH_NAME ($BRANCH_ID)"
-
-      - name: Delete branches older than 7 days
+      - name: Delete old branches and verify
         run: |
           curl -s -o /tmp/branches.json \
-            "https://console.neon.tech/api/v2/projects/${{ env.PROJECT_ID }}/branches" \
-            -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}"
+            "https://console.neon.tech/api/v2/projects/${PROJECT_ID}/branches" \
+            -H "Authorization: Bearer ${NEON_API_KEY}"
 
-          python3 << 'PYEOF'
-import json, urllib.request, urllib.error, os
-from datetime import datetime, timezone, timedelta
+          python3 -c "
+import json, urllib.request, urllib.error, os, sys
+from datetime import datetime, timezone, timedelta, date
 
 with open('/tmp/branches.json') as f:
     data = json.load(f)
@@ -59,46 +56,26 @@ for b in branches:
     created = datetime.fromisoformat(b['created_at'].replace('Z', '+00:00'))
     if created < cutoff:
         req = urllib.request.Request(
-            f"https://console.neon.tech/api/v2/projects/{project_id}/branches/{b['id']}",
+            f\"https://console.neon.tech/api/v2/projects/{project_id}/branches/{b['id']}\",
             method='DELETE',
-            headers={'Authorization': f"Bearer {api_key}"}
+            headers={'Authorization': f\"Bearer {api_key}\"}
         )
         try:
             urllib.request.urlopen(req)
-            print(f"Eliminado: {b['name']} ({b['id']})")
+            print(f\"Eliminado: {b['name']}\")
             deleted += 1
         except urllib.error.HTTPError as e:
-            print(f"ERROR eliminando {b['name']}: {e.code}")
+            print(f\"ERROR eliminando {b['name']}: {e.code}\")
 
-print(f"Branches eliminados: {deleted}" if deleted else "Sin branches expirados")
-PYEOF
-        env:
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          PROJECT_ID: ${{ env.PROJECT_ID }}
+print('Branches eliminados: ' + str(deleted) if deleted else 'Sin branches expirados')
 
-      - name: Verify backup exists
-        run: |
-          DATE=$(date -u '+%Y-%m-%d')
-          curl -s -o /tmp/verify.json \
-            "https://console.neon.tech/api/v2/projects/${{ env.PROJECT_ID }}/branches" \
-            -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}"
+names = sorted([b['name'] for b in branches if b['name'].startswith('backup-')])
+print('Branches activos: ' + str(names))
 
-          python3 << 'PYEOF'
-import json, os, sys
-from datetime import date
-
-with open('/tmp/verify.json') as f:
-    data = json.load(f)
-
-branches = sorted([b['name'] for b in data.get('branches', []) if b['name'].startswith('backup-')])
-print("Branches de backup activos:")
-for b in branches:
-    print(f"  {b}")
-
-today = f"backup-{date.today().strftime('%Y-%m-%d')}"
-if today in branches:
-    print(f"OK - backup del dia verificado: {today}")
+today = 'backup-' + date.today().strftime('%Y-%m-%d')
+if today in names:
+    print('OK - backup del dia verificado: ' + today)
 else:
-    print(f"ERROR - backup del dia no encontrado: {today}")
+    print('ERROR - backup del dia no encontrado: ' + today)
     sys.exit(1)
-PYEOF
+"
