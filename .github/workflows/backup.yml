@@ -14,6 +14,9 @@ jobs:
       PARENT_BRANCH: br-restless-tooth-ap2p51nb
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Create backup branch
         run: |
           DATE=$(date -u '+%Y-%m-%d')
@@ -36,46 +39,4 @@ jobs:
           curl -s -o /tmp/branches.json \
             "https://console.neon.tech/api/v2/projects/${PROJECT_ID}/branches" \
             -H "Authorization: Bearer ${NEON_API_KEY}"
-
-          python3 -c "
-import json, urllib.request, urllib.error, os, sys
-from datetime import datetime, timezone, timedelta, date
-
-with open('/tmp/branches.json') as f:
-    data = json.load(f)
-
-branches = data.get('branches', [])
-cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-api_key = os.environ['NEON_API_KEY']
-project_id = os.environ['PROJECT_ID']
-
-deleted = 0
-for b in branches:
-    if not b['name'].startswith('backup-'):
-        continue
-    created = datetime.fromisoformat(b['created_at'].replace('Z', '+00:00'))
-    if created < cutoff:
-        req = urllib.request.Request(
-            f\"https://console.neon.tech/api/v2/projects/{project_id}/branches/{b['id']}\",
-            method='DELETE',
-            headers={'Authorization': f\"Bearer {api_key}\"}
-        )
-        try:
-            urllib.request.urlopen(req)
-            print(f\"Eliminado: {b['name']}\")
-            deleted += 1
-        except urllib.error.HTTPError as e:
-            print(f\"ERROR eliminando {b['name']}: {e.code}\")
-
-print('Branches eliminados: ' + str(deleted) if deleted else 'Sin branches expirados')
-
-names = sorted([b['name'] for b in branches if b['name'].startswith('backup-')])
-print('Branches activos: ' + str(names))
-
-today = 'backup-' + date.today().strftime('%Y-%m-%d')
-if today in names:
-    print('OK - backup del dia verificado: ' + today)
-else:
-    print('ERROR - backup del dia no encontrado: ' + today)
-    sys.exit(1)
-"
+          python3 backup_manager.py
