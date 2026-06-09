@@ -38,7 +38,13 @@ def adapt_row(row, json_indices):
     for i in json_indices:
         if row[i] is not None:
             if isinstance(row[i], str):
-                row[i] = Json(_json.loads(row[i]))
+                if row[i].strip():
+                    try:
+                        row[i] = Json(_json.loads(row[i]))
+                    except _json.JSONDecodeError:
+                        row[i] = None
+                else:
+                    row[i] = None
             elif isinstance(row[i], (dict, list)):
                 row[i] = Json(row[i])
     return tuple(row)
