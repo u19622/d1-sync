@@ -112,6 +112,46 @@ for tabla in TABLAS:
     upsert(nc, ne, tabla, cols, rows, json_indices)
     print(f"  OK {len(rows)} filas")
 
+# ── Resync de secuencias ─────────────────────────────────────────────────────
+# Descubre dinámicamente todas las secuencias en Neon y las sincroniza con
+# MAX(id) de su tabla asociada. Esto garantiza que si Neon es activada como
+# BD primaria (DR-01 Paso 4C), los INSERTs no fallen por duplicate key.
+# El descubrimiento es dinámico: tablas nuevas con columna id serial quedan
+# cubiertas automáticamente sin modificar este script.
+print("Resyncing secuencias...")
+try:
+    nc2 = ne.cursor()
+    nc2.execute("""
+        SELECT s.relname AS seq, t.relname AS tabla, a.attname AS col
+        FROM pg_class s
+        JOIN pg_depend d ON d.objid = s.oid
+        JOIN pg_class t ON d.refobjid = t.oid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE s.relkind = 'S' AND n.nspname = 'public'
+        ORDER BY t.relname
+    """)
+    secuencias = nc2.fetchall()
+    for seq, tabla, col in secuencias:
+        try:
+            nc2.execute(f"SELECT COALESCE(MAX({col}), 1) FROM {tabla}")
+            max_id = nc2.fetchone()[0]
+            nc2.execute(f"SELECT last_value FROM {seq}")
+            last_val = nc2.fetchone()[0]
+            if max_id > last_val:
+                nc2.execute(f"SELECT setval('{seq}', %s)", (max_id,))
+                ne.commit()
+                print(f"  {tabla}.{col}: {last_val} -> {max_id}")
+            else:
+                print(f"  {tabla}.{col}: OK ({last_val})")
+        except Exception as e:
+            ne.rollback()
+            print(f"  ERROR en {tabla}.{col}: {e}")
+    nc2.close()
+except Exception as e:
+    print(f"ERROR resync secuencias: {e}")
+# ─────────────────────────────────────────────────────────────────────────────
+
 print("Sync completado")
 rc.close()
 nc.close()
