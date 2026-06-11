@@ -62,6 +62,29 @@ def upsert(nc, ne, tabla, cols, rows, json_indices):
     )
     ne.commit()
 
+# ── Detección de schema drift ────────────────────────────────────────────────
+# Compara columnas de cada tabla en Railway vs Neon antes de sincronizar.
+# Si Railway tiene columnas que no existen en Neon, aborta con mensaje legible.
+# Esto previene errores crípticos de psycopg2 mid-sync y garantiza que Neon
+# esté estructuralmente al día antes de cualquier conmutación DRP.
+print("Verificando schema drift...")
+drift_detectado = False
+for tabla in TABLAS:
+    cols_railway = get_cols(rc, tabla)
+    cols_neon    = get_cols(nc, tabla)
+    faltantes    = [c for c in cols_railway if c not in cols_neon]
+    if faltantes:
+        print(f"  DRIFT en '{tabla}': Railway tiene {faltantes} que no existen en Neon")
+        drift_detectado = True
+    else:
+        print(f"  OK {tabla}")
+if drift_detectado:
+    rw.close()
+    ne.close()
+    raise SystemExit("Schema drift detectado. Aplicar migraciones en Neon antes de continuar.")
+print("Schema OK — sin drift detectado")
+# ─────────────────────────────────────────────────────────────────────────────
+
 for tabla in TABLAS:
     print(f"Sincronizando {tabla}...")
     cols       = get_cols(rc, tabla)
