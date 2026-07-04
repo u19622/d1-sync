@@ -5,13 +5,13 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log']
+TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','ciclos','ciclo_cursos','ciclo_periodos','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log']
 
 PK_COMPUESTA = {
     'perfiles_facultades': '(perfil_id, facultad_id)',
 }
 PK_EXCLUIR = {'perfiles_facultades': {'perfil_id','facultad_id'}}
-TABLAS_FULL_SYNC = {'roles', 'tabla_valores'}
+TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos'}
 
 rw = psycopg2.connect(RAILWAY_URL)
 ne = psycopg2.connect(NEON_URL)
