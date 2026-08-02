@@ -5,7 +5,7 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','evaluaciones','alumno_programa_progreso','tabla_valores']
+TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','evaluaciones','alumno_programa_progreso','tabla_valores','organizaciones','planes','features','limites','plan_features','plan_limites','org_feature_overrides','org_limite_overrides']
 # 'tabla_valores' ya estaba en TABLAS_FULL_SYNC (abajo) desde antes, pero nunca
 # se agregó aquí — el loop principal itera sobre TABLAS, así que nunca se
 # sincronizaba en la práctica (ni se chequeaba su drift). Fase 3.14 / hallazgo
@@ -13,8 +13,18 @@ TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesore
 
 PK_COMPUESTA = {
     'perfiles_facultades': '(perfil_id, facultad_id)',
+    'plan_features': '(plan_id, feature_id)',
+    'plan_limites': '(plan_id, limite_id)',
+    'org_feature_overrides': '(organizacion_id, feature_id)',
+    'org_limite_overrides': '(organizacion_id, limite_id)',
 }
-PK_EXCLUIR = {'perfiles_facultades': {'perfil_id','facultad_id'}}
+PK_EXCLUIR = {
+    'perfiles_facultades': {'perfil_id','facultad_id'},
+    'plan_features': {'plan_id','feature_id'},
+    'plan_limites': {'plan_id','limite_id'},
+    'org_feature_overrides': {'organizacion_id','feature_id'},
+    'org_limite_overrides': {'organizacion_id','limite_id'},
+}
 TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 'ciclo_renovacion_jobs'}
 
 rw = psycopg2.connect(RAILWAY_URL)
