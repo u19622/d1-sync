@@ -5,7 +5,11 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','evaluaciones','alumno_programa_progreso']
+TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','evaluaciones','alumno_programa_progreso','tabla_valores']
+# 'tabla_valores' ya estaba en TABLAS_FULL_SYNC (abajo) desde antes, pero nunca
+# se agregó aquí — el loop principal itera sobre TABLAS, así que nunca se
+# sincronizaba en la práctica (ni se chequeaba su drift). Fase 3.14 / hallazgo
+# Continuidad LVIII, corregido aquí.
 
 PK_COMPUESTA = {
     'perfiles_facultades': '(perfil_id, facultad_id)',
