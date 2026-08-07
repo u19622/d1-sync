@@ -5,7 +5,11 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','evaluaciones','alumno_programa_progreso','tabla_valores','organizaciones','planes','features','limites','plan_features','plan_limites','org_feature_overrides','org_limite_overrides']
+TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','evaluaciones','alumno_programa_progreso','tabla_valores','organizaciones','planes','features','limites','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients']
+# 'audit_report_recipients' (Continuidad LXIV): sin columna updated_at, por eso
+# va tambien en TABLAS_FULL_SYNC abajo -- un UPDATE (toggle de 'activo' en
+# config.js) no mueve created_at, asi que el sync incremental normal nunca lo
+# habria detectado.
 # 'tabla_valores' ya estaba en TABLAS_FULL_SYNC (abajo) desde antes, pero nunca
 # se agregó aquí — el loop principal itera sobre TABLAS, así que nunca se
 # sincronizaba en la práctica (ni se chequeaba su drift). Fase 3.14 / hallazgo
@@ -25,7 +29,7 @@ PK_EXCLUIR = {
     'org_feature_overrides': {'organizacion_id','feature_id'},
     'org_limite_overrides': {'organizacion_id','limite_id'},
 }
-TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 'ciclo_renovacion_jobs', 'planes', 'features', 'limites', 'plan_features', 'plan_limites', 'org_feature_overrides', 'org_limite_overrides'}
+TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 'ciclo_renovacion_jobs', 'planes', 'features', 'limites', 'plan_features', 'plan_limites', 'org_feature_overrides', 'org_limite_overrides', 'audit_report_recipients'}
 
 rw = psycopg2.connect(RAILWAY_URL)
 ne = psycopg2.connect(NEON_URL)
