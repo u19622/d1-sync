@@ -184,6 +184,13 @@ for tabla in TABLAS:
 # BD primaria (DR-01 Paso 4C), los INSERTs no fallen por duplicate key.
 # El descubrimiento es dinámico: tablas nuevas con columna id serial quedan
 # cubiertas automáticamente sin modificar este script.
+# Los fallos acá también se acumulan en 'fallos' (sesión de hoy) -- antes,
+# este bloque tenía su propio try/except aislado del resto: un
+# "permission denied" en una secuencia (como pasó con ciclos_id_seq,
+# ciclo_cursos_id_seq y alumno_programa_progreso_id_seq antes del GRANT de
+# hoy) se imprimía pero el job terminaba "succeeded" igual, sin disparar la
+# alerta por email. Mismo tipo de gap que el que motivó el fallos.append()
+# del loop principal, aplicado acá también.
 print("Resyncing secuencias...")
 try:
     nc2 = ne.cursor()
@@ -213,9 +220,11 @@ try:
         except Exception as e:
             ne.rollback()
             print(f"  ERROR en {tabla}.{col}: {e}")
+            fallos.append(f"secuencia:{tabla}.{col}")
     nc2.close()
 except Exception as e:
     print(f"ERROR resync secuencias: {e}")
+    fallos.append("resync_secuencias")
 # ─────────────────────────────────────────────────────────────────────────────
 
 if fallos:
