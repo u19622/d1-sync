@@ -41,18 +41,37 @@ TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 
 # ── Poda de filas huérfanas en Neon ──────────────────────────────────────────
 # Railway es la fuente de verdad. upsert() nunca borra filas en Neon (solo
 # INSERT ... ON CONFLICT DO UPDATE) -- una fila borrada en Railway queda
-# huérfana en Neon para siempre si no se poda explícitamente. Confirmado en
-# sesión de hoy: 'matriculas' tenía 43 huérfanas (2063 en Neon vs 2020 en
-# Railway). Alcance inicial deliberadamente acotado a 'matriculas' -- PK
-# simple, único caso confirmado hoy -- no a las 31 tablas, mismo criterio de
-# "un paso a la vez" que el resto de la sesión. 'audit_log' nunca debe entrar
-# acá: es un registro histórico, no algo que deba "coincidir" con Railway.
-# UMBRAL_PODA es el freno de seguridad: si los huérfanos calculados superan
-# este número, no se borra nada en esa tabla y se reporta como fallo -- evita
-# que una lectura parcial (conexión cortada a mitad del SELECT id) se
-# interprete como "toda la tabla es huérfana" y la vacíe de un saque.
-TABLAS_PODABLES = {'matriculas'}
-UMBRAL_PODA = 50
+# huérfana en Neon para siempre si no se poda explícitamente.
+#
+# TABLAS_PODABLES es una LISTA, no un set -- el orden importa. Debe ir hijo
+# antes que padre según las FK reales: 'asistencia' referencia 'matriculas'
+# (asistencia.matricula_id), así que se poda primero -- si se podara
+# 'matriculas' primero, cualquier matrícula huérfana con asistencias
+# huérfanas asociadas rompe por "violates foreign key constraint
+# asistencia_matricula_id_fkey" (confirmado en sesión de hoy, corrida #1296).
+# Mismo tipo de error de fondo que el de TABLAS más arriba, pero en la
+# dirección de borrado en vez de inserción.
+#
+# UMBRAL_PODA_POR_TABLA es el freno de seguridad, uno por tabla (no un único
+# número global): si los huérfanos calculados para una tabla superan su
+# umbral, no se borra nada en esa tabla y se reporta como fallo -- evita que
+# una lectura parcial (conexión cortada a mitad del SELECT id) se interprete
+# como "toda la tabla es huérfana" y la vacíe de un saque. Cada tabla nueva
+# que se agregue a TABLAS_PODABLES DEBE tener su entrada acá -- si falta, el
+# script aborta esa tabla explícitamente en vez de aplicar un default
+# silencioso (ver el chequeo al inicio del loop de poda, más abajo).
+#
+# Valores confirmados con evidencia real en sesión de hoy (20-ago-2026):
+# matriculas tenía 43 huérfanas (2063 Neon vs 2020 Railway, todas de
+# mayo-julio 2026, ninguna con ciclo_id -- confirmado que no son del esquema
+# de matrícula por ciclos). asistencia tenía 325 (5521 Neon vs 5196 Railway,
+# mismo patrón temporal). Los umbrales dejan margen sobre esos números sin
+# ser tan altos que dejen de servir de freno real.
+TABLAS_PODABLES = ['asistencia', 'matriculas']
+UMBRAL_PODA_POR_TABLA = {
+    'asistencia': 400,
+    'matriculas': 100,
+}
 
 rw = psycopg2.connect(RAILWAY_URL)
 ne = psycopg2.connect(NEON_URL)
@@ -199,6 +218,12 @@ print("Podando filas huérfanas...")
 for tabla in TABLAS_PODABLES:
     print(f"Revisando huérfanos en {tabla}...")
     try:
+        if tabla not in UMBRAL_PODA_POR_TABLA:
+            print(f"  ABORTADO: sin umbral definido para '{tabla}' en UMBRAL_PODA_POR_TABLA -- agregar antes de habilitar la poda")
+            fallos.append(f"poda:{tabla}:sin_umbral_definido")
+            continue
+        umbral = UMBRAL_PODA_POR_TABLA[tabla]
+
         rc.execute(f"SELECT id FROM {tabla}")
         ids_railway = {r[0] for r in rc.fetchall()}
         nc.execute(f"SELECT id FROM {tabla}")
@@ -209,8 +234,8 @@ for tabla in TABLAS_PODABLES:
             print(f"  Sin huérfanos")
             continue
 
-        if len(huerfanos) > UMBRAL_PODA:
-            print(f"  ABORTADO: {len(huerfanos)} huérfanos supera el umbral de seguridad ({UMBRAL_PODA}) -- no se borró nada, revisar manualmente")
+        if len(huerfanos) > umbral:
+            print(f"  ABORTADO: {len(huerfanos)} huérfanos supera el umbral de seguridad para '{tabla}' ({umbral}) -- no se borró nada, revisar manualmente")
             fallos.append(f"poda:{tabla}:{len(huerfanos)}_huerfanos_supera_umbral")
             continue
 
