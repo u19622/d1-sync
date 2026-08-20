@@ -38,6 +38,22 @@ PK_EXCLUIR = {
 }
 TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 'ciclo_renovacion_jobs', 'planes', 'features', 'limites', 'plan_features', 'plan_limites', 'org_feature_overrides', 'org_limite_overrides', 'audit_report_recipients'}
 
+# ── Poda de filas huérfanas en Neon ──────────────────────────────────────────
+# Railway es la fuente de verdad. upsert() nunca borra filas en Neon (solo
+# INSERT ... ON CONFLICT DO UPDATE) -- una fila borrada en Railway queda
+# huérfana en Neon para siempre si no se poda explícitamente. Confirmado en
+# sesión de hoy: 'matriculas' tenía 43 huérfanas (2063 en Neon vs 2020 en
+# Railway). Alcance inicial deliberadamente acotado a 'matriculas' -- PK
+# simple, único caso confirmado hoy -- no a las 31 tablas, mismo criterio de
+# "un paso a la vez" que el resto de la sesión. 'audit_log' nunca debe entrar
+# acá: es un registro histórico, no algo que deba "coincidir" con Railway.
+# UMBRAL_PODA es el freno de seguridad: si los huérfanos calculados superan
+# este número, no se borra nada en esa tabla y se reporta como fallo -- evita
+# que una lectura parcial (conexión cortada a mitad del SELECT id) se
+# interprete como "toda la tabla es huérfana" y la vacíe de un saque.
+TABLAS_PODABLES = {'matriculas'}
+UMBRAL_PODA = 50
+
 rw = psycopg2.connect(RAILWAY_URL)
 ne = psycopg2.connect(NEON_URL)
 rw.autocommit = True
@@ -176,6 +192,37 @@ for tabla in TABLAS:
         ne.rollback()
         print(f"  ERROR en {tabla}: {e}")
         fallos.append(tabla)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Poda de filas huérfanas (ver comentario junto a TABLAS_PODABLES arriba) ──
+print("Podando filas huérfanas...")
+for tabla in TABLAS_PODABLES:
+    print(f"Revisando huérfanos en {tabla}...")
+    try:
+        rc.execute(f"SELECT id FROM {tabla}")
+        ids_railway = {r[0] for r in rc.fetchall()}
+        nc.execute(f"SELECT id FROM {tabla}")
+        ids_neon = {r[0] for r in nc.fetchall()}
+        huerfanos = ids_neon - ids_railway
+
+        if not huerfanos:
+            print(f"  Sin huérfanos")
+            continue
+
+        if len(huerfanos) > UMBRAL_PODA:
+            print(f"  ABORTADO: {len(huerfanos)} huérfanos supera el umbral de seguridad ({UMBRAL_PODA}) -- no se borró nada, revisar manualmente")
+            fallos.append(f"poda:{tabla}:{len(huerfanos)}_huerfanos_supera_umbral")
+            continue
+
+        ids_lista = list(huerfanos)
+        nc.execute(f"DELETE FROM {tabla} WHERE id = ANY(%s)", (ids_lista,))
+        ne.commit()
+        print(f"  OK {len(huerfanos)} filas huérfanas eliminadas: {sorted(huerfanos)}")
+
+    except Exception as e:
+        ne.rollback()
+        print(f"  ERROR en poda de {tabla}: {e}")
+        fallos.append(f"poda:{tabla}")
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Resync de secuencias ─────────────────────────────────────────────────────
