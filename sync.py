@@ -5,7 +5,7 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesores','usuarios','clases','alumnos','matriculas','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','asistencia','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','evaluaciones','alumno_programa_progreso','tabla_valores','organizaciones','planes','features','limites','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients']
+TABLAS = ['organizaciones','roles','facultades','planes','features','limites','sedes','programas','profesores','cursos','salones','usuarios','clases','alumnos','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','matriculas','asistencia','evaluaciones','alumno_programa_progreso','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','tabla_valores','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients']
 # 'audit_report_recipients' (Continuidad LXIV): sin columna updated_at, por eso
 # va tambien en TABLAS_FULL_SYNC abajo -- un UPDATE (toggle de 'activo' en
 # config.js) no mueve created_at, asi que el sync incremental normal nunca lo
@@ -14,6 +14,13 @@ TABLAS = ['roles','sedes','programas','cursos','salones','facultades','profesore
 # se agregó aquí — el loop principal itera sobre TABLAS, así que nunca se
 # sincronizaba en la práctica (ni se chequeaba su drift). Fase 3.14 / hallazgo
 # Continuidad LVIII, corregido aquí.
+# Orden reordenado (sesión de hoy, Continuidad LXVI+1): topológico por
+# dependencias FK -- 'organizaciones' primero (referenciada por casi todas),
+# 'ciclos' antes que 'matriculas' (matriculas.ciclo_id depende de ciclos),
+# 'matriculas' antes que 'asistencia' (asistencia.matricula_id depende de
+# matriculas). Antes, 'matriculas' iba antes que 'ciclos' y todas las tablas
+# organizacion_id iban antes que 'organizaciones' -- causa raíz del incidente
+# de Continuidad LXV y riesgo latente para el alta de la organización #2.
 
 PK_COMPUESTA = {
     'perfiles_facultades': '(perfil_id, facultad_id)',
@@ -103,55 +110,73 @@ if drift_detectado:
 print("Schema OK — sin drift detectado")
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── Sync por tabla, con manejo de errores individual ─────────────────────────
+# Cada tabla corre en su propio try/except: si una falla (ej. FK violation por
+# una dependencia todavía no resuelta), no tumba las tablas restantes de la
+# lista. 'ne.rollback()' es obligatorio en el except: con ne.autocommit=False,
+# una excepción a mitad de un INSERT deja la conexión en estado de transacción
+# abortada -- sin el rollback, TODAS las tablas siguientes fallarían en
+# cascada con "current transaction is aborted", no solo la que tiene el
+# problema real. Los fallos se acumulan en 'fallos' y al final del script se
+# fuerza un exit no-cero si hubo alguno, para no perder la alerta por email
+# (ver incidente Continuidad LXV) aunque el resto haya sincronizado bien.
+fallos = []
 for tabla in TABLAS:
     print(f"Sincronizando {tabla}...")
-    cols       = get_cols(rc, tabla)
-    json_cols  = get_json_cols(rc, tabla)
-    json_indices = [cols.index(c) for c in json_cols if c in cols]
+    try:
+        cols       = get_cols(rc, tabla)
+        json_cols  = get_json_cols(rc, tabla)
+        json_indices = [cols.index(c) for c in json_cols if c in cols]
 
-    if tabla in TABLAS_FULL_SYNC:
-        rc.execute(f"SELECT * FROM {tabla}")
+        if tabla in TABLAS_FULL_SYNC:
+            rc.execute(f"SELECT * FROM {tabla}")
+            rows = rc.fetchall()
+            if not rows:
+                print(f"  Sin datos")
+                continue
+            upsert(nc, ne, tabla, cols, rows, json_indices)
+            print(f"  OK {len(rows)} filas (full sync)")
+            continue
+
+        tiene_updated = has_col(nc, tabla, 'updated_at')
+        tiene_created = has_col(nc, tabla, 'created_at')
+
+        if tiene_updated and tiene_created:
+            nc.execute(f"SELECT COALESCE(MAX(updated_at), MAX(created_at), '1970-01-01'::timestamptz) FROM {tabla}")
+        elif tiene_updated:
+            nc.execute(f"SELECT COALESCE(MAX(updated_at), '1970-01-01'::timestamptz) FROM {tabla}")
+        elif tiene_created:
+            nc.execute(f"SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamptz) FROM {tabla}")
+        else:
+            print(f"  Sin columna de fecha, omitiendo")
+            continue
+        last = nc.fetchone()[0]
+
+        tiene_updated_rw = has_col(rc, tabla, 'updated_at')
+        tiene_created_rw = has_col(rc, tabla, 'created_at')
+
+        if tiene_updated_rw and tiene_created_rw:
+            rc.execute(f"SELECT * FROM {tabla} WHERE COALESCE(updated_at, created_at) > %s", (last,))
+        elif tiene_updated_rw:
+            rc.execute(f"SELECT * FROM {tabla} WHERE updated_at > %s", (last,))
+        elif tiene_created_rw:
+            rc.execute(f"SELECT * FROM {tabla} WHERE created_at > %s", (last,))
+        else:
+            rc.execute(f"SELECT * FROM {tabla}")
+
         rows = rc.fetchall()
         if not rows:
-            print(f"  Sin datos")
+            print(f"  Sin cambios")
             continue
+
         upsert(nc, ne, tabla, cols, rows, json_indices)
-        print(f"  OK {len(rows)} filas (full sync)")
-        continue
+        print(f"  OK {len(rows)} filas")
 
-    tiene_updated = has_col(nc, tabla, 'updated_at')
-    tiene_created = has_col(nc, tabla, 'created_at')
-
-    if tiene_updated and tiene_created:
-        nc.execute(f"SELECT COALESCE(MAX(updated_at), MAX(created_at), '1970-01-01'::timestamptz) FROM {tabla}")
-    elif tiene_updated:
-        nc.execute(f"SELECT COALESCE(MAX(updated_at), '1970-01-01'::timestamptz) FROM {tabla}")
-    elif tiene_created:
-        nc.execute(f"SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamptz) FROM {tabla}")
-    else:
-        print(f"  Sin columna de fecha, omitiendo")
-        continue
-    last = nc.fetchone()[0]
-
-    tiene_updated_rw = has_col(rc, tabla, 'updated_at')
-    tiene_created_rw = has_col(rc, tabla, 'created_at')
-
-    if tiene_updated_rw and tiene_created_rw:
-        rc.execute(f"SELECT * FROM {tabla} WHERE COALESCE(updated_at, created_at) > %s", (last,))
-    elif tiene_updated_rw:
-        rc.execute(f"SELECT * FROM {tabla} WHERE updated_at > %s", (last,))
-    elif tiene_created_rw:
-        rc.execute(f"SELECT * FROM {tabla} WHERE created_at > %s", (last,))
-    else:
-        rc.execute(f"SELECT * FROM {tabla}")
-
-    rows = rc.fetchall()
-    if not rows:
-        print(f"  Sin cambios")
-        continue
-
-    upsert(nc, ne, tabla, cols, rows, json_indices)
-    print(f"  OK {len(rows)} filas")
+    except Exception as e:
+        ne.rollback()
+        print(f"  ERROR en {tabla}: {e}")
+        fallos.append(tabla)
+# ─────────────────────────────────────────────────────────────────────────────
 
 # ── Resync de secuencias ─────────────────────────────────────────────────────
 # Descubre dinámicamente todas las secuencias en Neon y las sincroniza con
@@ -192,6 +217,13 @@ try:
 except Exception as e:
     print(f"ERROR resync secuencias: {e}")
 # ─────────────────────────────────────────────────────────────────────────────
+
+if fallos:
+    rc.close()
+    nc.close()
+    rw.close()
+    ne.close()
+    raise SystemExit(f"Sync con errores en: {', '.join(fallos)}")
 
 print("Sync completado")
 rc.close()
