@@ -67,6 +67,28 @@ TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 
 # de matrícula por ciclos). asistencia tenía 325 (5521 Neon vs 5196 Railway,
 # mismo patrón temporal). Los umbrales dejan margen sobre esos números sin
 # ser tan altos que dejen de servir de freno real.
+#
+# BARRIDO COMPLETO (misma sesión, después de podar asistencia/matriculas):
+# se comparó COUNT(*) de las 29 tablas restantes (todo TABLAS menos
+# audit_log) entre Railway y Neon. 28 coinciden exacto. La única con
+# diferencia es 'usuarios' (Neon con 3 huérfanas: ids 2, 24, 30) -- y se
+# decidió EXPLÍCITAMENTE no agregarla a TABLAS_PODABLES, no por descuido:
+#   - id 2 (Ingrid Cajahuaringa Vales) e id 24 (Yuliana Huapaya): bajas de
+#     personal reales y correctas (confirmado por Carlos, 20-ago-2026) --
+#     Angela Gratta (id 29) entró en reemplazo de Ingrid.
+#   - id 30 ("juan Perez"): cuenta ficticia de prueba, creada y luego
+#     eliminada por Carlos.
+#   - asistencia.registrado_por tiene 623 filas en Neon que referencian a
+#     estos 3 ids (mayoritariamente atribuible a Ingrid, que fue admin_sede
+#     activa) -- un DELETE sobre usuarios chocaría con esa FK como ya pasó
+#     con matriculas/asistencia (#1296), y a diferencia de esas dos tablas,
+#     acá cada fila es una persona real: un huérfano en 'usuarios' representa
+#     una decisión de baja de personal, no solo lag del sync. Automatizar su
+#     borrado cada 30 minutos sin supervisión no es el mismo tipo de riesgo
+#     que podar matrículas o asistencias.
+# Si en el futuro se decide limpiar estos 3 de Neon, es una acción manual
+# puntual -- no agregar 'usuarios' a esta lista sin volver a evaluar la FK de
+# asistencia.registrado_por y qué hacer con esas 623 referencias históricas.
 TABLAS_PODABLES = ['asistencia', 'matriculas']
 UMBRAL_PODA_POR_TABLA = {
     'asistencia': 400,
