@@ -5,7 +5,15 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['organizaciones','roles','facultades','planes','features','limites','sedes','programas','profesores','cursos','salones','usuarios','clases','alumnos','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','matriculas','asistencia','evaluaciones','alumno_programa_progreso','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','tabla_valores','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients','ocupacion_report_recipients']
+TABLAS = ['organizaciones','roles','facultades','planes','features','limites','sedes','programas','profesores','cursos','salones','usuarios','clases','alumnos','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','matriculas','asistencia','evaluaciones','alumno_programa_progreso','perfiles_facultades','org_perfiles_facultades','usuario_facultades_override','configuracion','audit_log','tabla_valores','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients','ocupacion_report_recipients']
+# 'org_perfiles_facultades' (Continuidad LXXIV): override de perfiles_facultades
+# por organizacion (Bloque 2, Opcion C). A diferencia de audit_report_recipients/
+# ocupacion_report_recipients, SI tiene updated_at -- mismo caso que
+# perfiles_facultades (tambien PK compuesta, tambien sin full-sync) -- asi que
+# el sync incremental normal alcanza, no hace falta agregarla a
+# TABLAS_FULL_SYNC. Agregada desde el dia 1 de la tabla (no como fix tardio,
+# a diferencia de las dos anteriores) porque esta vez se revisó sync.py antes
+# de cerrar la sesión, no después de un sync en verde que resultó no serlo.
 # 'audit_report_recipients' (Continuidad LXIV): sin columna updated_at, por eso
 # va tambien en TABLAS_FULL_SYNC abajo -- un UPDATE (toggle de 'activo' en
 # config.js) no mueve created_at, asi que el sync incremental normal nunca lo
@@ -30,6 +38,7 @@ TABLAS = ['organizaciones','roles','facultades','planes','features','limites','s
 
 PK_COMPUESTA = {
     'perfiles_facultades': '(perfil_id, facultad_id)',
+    'org_perfiles_facultades': '(organizacion_id, perfil_id, facultad_id)',
     'plan_features': '(plan_id, feature_id)',
     'plan_limites': '(plan_id, limite_id)',
     'org_feature_overrides': '(organizacion_id, feature_id)',
@@ -37,6 +46,7 @@ PK_COMPUESTA = {
 }
 PK_EXCLUIR = {
     'perfiles_facultades': {'perfil_id','facultad_id'},
+    'org_perfiles_facultades': {'organizacion_id','perfil_id','facultad_id'},
     'plan_features': {'plan_id','feature_id'},
     'plan_limites': {'plan_id','limite_id'},
     'org_feature_overrides': {'organizacion_id','feature_id'},
