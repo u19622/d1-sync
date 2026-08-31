@@ -5,11 +5,17 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['organizaciones','roles','facultades','planes','features','limites','sedes','programas','profesores','cursos','salones','usuarios','clases','alumnos','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','matriculas','asistencia','evaluaciones','alumno_programa_progreso','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','tabla_valores','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients']
+TABLAS = ['organizaciones','roles','facultades','planes','features','limites','sedes','programas','profesores','cursos','salones','usuarios','clases','alumnos','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','matriculas','asistencia','evaluaciones','alumno_programa_progreso','perfiles_facultades','usuario_facultades_override','configuracion','audit_log','tabla_valores','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients','ocupacion_report_recipients']
 # 'audit_report_recipients' (Continuidad LXIV): sin columna updated_at, por eso
 # va tambien en TABLAS_FULL_SYNC abajo -- un UPDATE (toggle de 'activo' en
 # config.js) no mueve created_at, asi que el sync incremental normal nunca lo
 # habria detectado.
+# 'ocupacion_report_recipients' (Continuidad LXXIV): mismo caso exacto que
+# audit_report_recipients -- misma forma de tabla, mismo toggle de 'activo'
+# sin updated_at. Faltaba en esta lista desde que se creó la tabla; el sync
+# corrió en verde igual porque el resync de secuencias la encontró por
+# introspección genérica, pero el chequeo de drift y la sincronización de
+# filas nunca la tocaban hasta este fix.
 # 'tabla_valores' ya estaba en TABLAS_FULL_SYNC (abajo) desde antes, pero nunca
 # se agregó aquí — el loop principal itera sobre TABLAS, así que nunca se
 # sincronizaba en la práctica (ni se chequeaba su drift). Fase 3.14 / hallazgo
@@ -36,7 +42,7 @@ PK_EXCLUIR = {
     'org_feature_overrides': {'organizacion_id','feature_id'},
     'org_limite_overrides': {'organizacion_id','limite_id'},
 }
-TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 'ciclo_renovacion_jobs', 'planes', 'features', 'limites', 'plan_features', 'plan_limites', 'org_feature_overrides', 'org_limite_overrides', 'audit_report_recipients'}
+TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 'ciclo_renovacion_jobs', 'planes', 'features', 'limites', 'plan_features', 'plan_limites', 'org_feature_overrides', 'org_limite_overrides', 'audit_report_recipients', 'ocupacion_report_recipients'}
 
 # ── Poda de filas huérfanas en Neon ──────────────────────────────────────────
 # Railway es la fuente de verdad. upsert() nunca borra filas en Neon (solo
