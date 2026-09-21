@@ -41,8 +41,7 @@ TABLAS = ['organizaciones','roles','facultades','planes','features','limites','s
 # sus filas no se modifican: se insertan o se borran), por eso va en TABLAS_FULL_SYNC -- la marca de agua por
 # fecha del sync incremental no le sirve. OJO: el upsert NUNCA borra, asi que quitarle una sede a un usuario en
 # Railway deja la fila vieja en Neon (en un DRP, ese usuario conservaria acceso a esa sede). La poda de abajo
-# solo sabe podar por 'id' y esta tabla no lo tiene: pendiente extenderla ANTES de habilitar la asignacion de
-# sedes desde la interfaz (fase 2c).
+# (TABLAS_PODABLES + CLAVE_PODA) la cubre con su clave compuesta (usuario_id, sede_id) y un umbral de 10.
 PK_COMPUESTA = {
     'perfiles_facultades': '(perfil_id, facultad_id)',
     'org_perfiles_facultades': '(organizacion_id, perfil_id, facultad_id)',
@@ -114,10 +113,16 @@ TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 
 # Si en el futuro se decide limpiar estos 3 de Neon, es una acción manual
 # puntual -- no agregar 'usuarios' a esta lista sin volver a evaluar la FK de
 # asistencia.registrado_por y qué hacer con esas 623 referencias históricas.
-TABLAS_PODABLES = ['asistencia', 'matriculas']
+TABLAS_PODABLES = ['asistencia', 'matriculas', 'usuario_sedes']
 UMBRAL_PODA_POR_TABLA = {
     'asistencia': 400,
     'matriculas': 100,
+    'usuario_sedes': 10,
+}
+# Clave con la que se identifica una fila al podar. Por defecto ('id',).
+# 'usuario_sedes' no tiene id: su clave es compuesta.
+CLAVE_PODA = {
+    'usuario_sedes': ('usuario_id', 'sede_id'),
 }
 
 rw = psycopg2.connect(RAILWAY_URL)
@@ -271,10 +276,12 @@ for tabla in TABLAS_PODABLES:
             continue
         umbral = UMBRAL_PODA_POR_TABLA[tabla]
 
-        rc.execute(f"SELECT id FROM {tabla}")
-        ids_railway = {r[0] for r in rc.fetchall()}
-        nc.execute(f"SELECT id FROM {tabla}")
-        ids_neon = {r[0] for r in nc.fetchall()}
+        clave = CLAVE_PODA.get(tabla, ('id',))
+        cols_clave = ', '.join(clave)
+        rc.execute(f"SELECT {cols_clave} FROM {tabla}")
+        ids_railway = {r[0] if len(clave) == 1 else tuple(r) for r in rc.fetchall()}
+        nc.execute(f"SELECT {cols_clave} FROM {tabla}")
+        ids_neon = {r[0] if len(clave) == 1 else tuple(r) for r in nc.fetchall()}
         huerfanos = ids_neon - ids_railway
 
         if not huerfanos:
@@ -286,8 +293,11 @@ for tabla in TABLAS_PODABLES:
             fallos.append(f"poda:{tabla}:{len(huerfanos)}_huerfanos_supera_umbral")
             continue
 
-        ids_lista = list(huerfanos)
-        nc.execute(f"DELETE FROM {tabla} WHERE id = ANY(%s)", (ids_lista,))
+        if len(clave) == 1:
+            ids_lista = list(huerfanos)
+            nc.execute(f"DELETE FROM {tabla} WHERE id = ANY(%s)", (ids_lista,))
+        else:
+            nc.execute(f"DELETE FROM {tabla} WHERE ({cols_clave}) IN %s", (tuple(huerfanos),))
         ne.commit()
         print(f"  OK {len(huerfanos)} filas huérfanas eliminadas: {sorted(huerfanos)}")
 
