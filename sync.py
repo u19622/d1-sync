@@ -5,7 +5,7 @@ from psycopg2.extras import Json
 RAILWAY_URL = os.environ['RAILWAY_URL']
 NEON_URL    = os.environ['NEON_URL']
 
-TABLAS = ['organizaciones','roles','facultades','planes','features','limites','sedes','programas','profesores','cursos','salones','usuarios','clases','alumnos','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','matriculas','asistencia','evaluaciones','alumno_programa_progreso','perfiles_facultades','org_perfiles_facultades','usuario_facultades_override','configuracion','audit_log','tabla_valores','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients','ocupacion_report_recipients']
+TABLAS = ['organizaciones','roles','facultades','planes','features','limites','sedes','programas','profesores','cursos','salones','usuarios','clases','alumnos','ciclos','ciclo_cursos','ciclo_periodos','ciclo_renovacion_jobs','matriculas','asistencia','evaluaciones','alumno_programa_progreso','perfiles_facultades','org_perfiles_facultades','usuario_facultades_override','usuario_sedes','configuracion','audit_log','tabla_valores','plan_features','plan_limites','org_feature_overrides','org_limite_overrides','audit_report_recipients','ocupacion_report_recipients']
 # 'org_perfiles_facultades' (Continuidad LXXIV): override de perfiles_facultades
 # por organizacion (Bloque 2, Opcion C). A diferencia de audit_report_recipients/
 # ocupacion_report_recipients, SI tiene updated_at -- mismo caso que
@@ -36,6 +36,13 @@ TABLAS = ['organizaciones','roles','facultades','planes','features','limites','s
 # organizacion_id iban antes que 'organizaciones' -- causa raíz del incidente
 # de Continuidad LXV y riesgo latente para el alta de la organización #2.
 
+# 'usuario_sedes' (item 5 fase 2b, 20-sep-2026): sedes de cada usuario admin_sede/asistente (multi-sede).
+# Va DESPUES de 'usuarios' y 'sedes' (FK a las dos) en TABLAS. PK compuesta y sin updated_at (solo created_at;
+# sus filas no se modifican: se insertan o se borran), por eso va en TABLAS_FULL_SYNC -- la marca de agua por
+# fecha del sync incremental no le sirve. OJO: el upsert NUNCA borra, asi que quitarle una sede a un usuario en
+# Railway deja la fila vieja en Neon (en un DRP, ese usuario conservaria acceso a esa sede). La poda de abajo
+# solo sabe podar por 'id' y esta tabla no lo tiene: pendiente extenderla ANTES de habilitar la asignacion de
+# sedes desde la interfaz (fase 2c).
 PK_COMPUESTA = {
     'perfiles_facultades': '(perfil_id, facultad_id)',
     'org_perfiles_facultades': '(organizacion_id, perfil_id, facultad_id)',
@@ -43,6 +50,7 @@ PK_COMPUESTA = {
     'plan_limites': '(plan_id, limite_id)',
     'org_feature_overrides': '(organizacion_id, feature_id)',
     'org_limite_overrides': '(organizacion_id, limite_id)',
+    'usuario_sedes': '(usuario_id, sede_id)',
 }
 PK_EXCLUIR = {
     'perfiles_facultades': {'perfil_id','facultad_id'},
@@ -51,8 +59,9 @@ PK_EXCLUIR = {
     'plan_limites': {'plan_id','limite_id'},
     'org_feature_overrides': {'organizacion_id','feature_id'},
     'org_limite_overrides': {'organizacion_id','limite_id'},
+    'usuario_sedes': {'usuario_id','sede_id'},
 }
-TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 'ciclo_renovacion_jobs', 'planes', 'features', 'limites', 'plan_features', 'plan_limites', 'org_feature_overrides', 'org_limite_overrides', 'audit_report_recipients', 'ocupacion_report_recipients'}
+TABLAS_FULL_SYNC = {'roles', 'tabla_valores', 'ciclo_cursos', 'ciclo_periodos', 'ciclo_renovacion_jobs', 'planes', 'features', 'limites', 'plan_features', 'plan_limites', 'org_feature_overrides', 'org_limite_overrides', 'audit_report_recipients', 'ocupacion_report_recipients', 'usuario_sedes'}
 
 # ── Poda de filas huérfanas en Neon ──────────────────────────────────────────
 # Railway es la fuente de verdad. upsert() nunca borra filas en Neon (solo
